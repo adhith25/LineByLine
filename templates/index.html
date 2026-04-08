@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ExplainX — Multi-Perspective Code Engine</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════════════════════════════ -->
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">
+      <span class="logo-x">X</span>
+      <span class="logo-text">Explain<em>X</em></span>
+      <span class="logo-tag">Multi-Perspective Code Engine</span>
+    </div>
+    <nav class="header-meta">
+      <div class="adaptive-meter" title="Comprehension Score">
+        <span class="meter-label">Adaptive Level</span>
+        <div class="meter-bar-wrap"><div class="meter-bar" id="meterBar"></div></div>
+        <span class="meter-score" id="meterScore">50</span>
+      </div>
+      <button class="btn-ghost" id="btnReset">↺ Reset</button>
+    </nav>
+  </div>
+</header>
+
+<!-- ═══ LAYOUT ════════════════════════════════════════════════════════════════ -->
+<main class="layout">
+
+  <!-- LEFT: Code Input -->
+  <section class="panel panel-left">
+
+    <div class="panel-controls">
+      <div class="control-group">
+        <label class="ctrl-label">Language</label>
+        <select id="langSelect" class="ctrl-select">
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="java">Java</option>
+          <option value="cpp">C++</option>
+          <option value="c">C</option>
+          <option value="typescript">TypeScript</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label class="ctrl-label">Explanation Mode</label>
+        <div class="mode-pills" id="modePills">
+          <button class="mode-pill active" data-mode="beginner">🌱 Beginner</button>
+          <button class="mode-pill"        data-mode="technical">⚙️ Technical</button>
+          <button class="mode-pill"        data-mode="interview">🎯 Interview</button>
+          <button class="mode-pill"        data-mode="story">📖 Story</button>
+          <button class="mode-pill mode-pill--adaptive" data-mode="adaptive">✨ Adaptive</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="editor-wrap">
+      <div class="editor-header">
+        <span class="editor-dot red"></span>
+        <span class="editor-dot amber"></span>
+        <span class="editor-dot green"></span>
+        <span class="editor-filename" id="editorFilename">untitled.py</span>
+        <div class="editor-actions">
+          <button class="btn-icon" id="btnClear">✕ Clear</button>
+          <button class="btn-icon" id="btnSample">⬇ Sample</button>
+        </div>
+      </div>
+      <div class="editor-container">
+        <div class="line-numbers" id="lineNumbers"></div>
+        <textarea id="codeInput" class="code-editor"
+          placeholder="Paste or type your code here…"
+          spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+    </div>
+
+    <button class="btn-explain" id="btnExplain">
+      <span>⚡</span>
+      <span>Generate Explanation</span>
+      <span class="btn-explain-mode" id="btnModeLabel">Beginner</span>
+    </button>
+
+    <button class="btn-blocks" id="btnBlocks">
+      <span>🧩</span>
+      <span>Explain Block by Block</span>
+      <span class="btn-blocks-hint">great for long code</span>
+    </button>
+
+    <div class="structure-tags" id="structureTags"></div>
+
+  </section>
+
+  <!-- RIGHT: Output -->
+  <section class="panel panel-right" id="panelOutput">
+
+    <!-- Placeholder -->
+    <div class="output-placeholder" id="outputPlaceholder">
+      <div class="placeholder-icon">🔭</div>
+      <p class="placeholder-title">No explanation yet</p>
+      <p class="placeholder-sub">Paste code on the left and hit <strong>Generate Explanation</strong> or <strong>Block by Block</strong></p>
+    </div>
+
+    <!-- Loading -->
+    <div class="output-loading hidden" id="outputLoading">
+      <div class="loading-orbs">
+        <span class="orb orb1"></span><span class="orb orb2"></span><span class="orb orb3"></span>
+      </div>
+      <p class="loading-text" id="loadingText">Analyzing code structure…</p>
+    </div>
+
+    <!-- Full Explanation -->
+    <div class="output-content hidden" id="outputContent">
+      <div class="output-meta">
+        <span class="mode-badge" id="modeBadge">Beginner</span>
+        <div class="complexity-chips" id="complexityChips"></div>
+      </div>
+      <article class="explanation-body" id="explanationBody"></article>
+      <div class="line-breakdown" id="lineBreakdown"></div>
+      <div class="questions-section" id="questionsSection"></div>
+
+      <!-- Voice -->
+      <div class="voice-controls">
+        <button class="btn-voice" id="btnVoice">🔊 <span>Read Aloud</span></button>
+        <button class="btn-voice btn-voice--stop hidden" id="btnVoiceStop">⏹ <span>Stop</span></button>
+      </div>
+
+      <!-- ═══ FOLLOW-UP CHAT ══════════════════════════════════════════════ -->
+      <div class="followup-panel" id="followupPanel">
+        <div class="followup-header">
+          <span class="followup-title">💬 Still confused? Ask me anything</span>
+          <button class="followup-clear" id="btnClearChat" title="Clear chat">🗑</button>
+        </div>
+
+        <!-- Quick action buttons -->
+        <div class="quick-actions">
+          <button class="qa-btn" data-action="simpler">🐣 Explain simpler</button>
+          <button class="qa-btn" data-action="eli5">👶 Explain like I'm 5</button>
+          <button class="qa-btn" data-action="analogy">🌍 Real-world analogy</button>
+          <button class="qa-btn" data-action="example">📌 Show an example</button>
+          <button class="qa-btn" data-action="visualize">🔍 Visualize it</button>
+          <button class="qa-btn" data-action="deeper">🚀 Go deeper</button>
+          <button class="qa-btn" data-action="mistakes">⚠️ Common mistakes</button>
+          <button class="qa-btn" data-action="compare">⚖️ Compare approaches</button>
+          <button class="qa-btn" data-action="summary">📋 Short summary</button>
+        </div>
+
+        <!-- Chat messages -->
+        <div class="chat-messages" id="chatMessages"></div>
+
+        <!-- Free-text input -->
+        <div class="chat-input-wrap">
+          <textarea
+            id="chatInput"
+            class="chat-input"
+            placeholder="Ask anything… e.g. 'What does line 5 mean?' or 'Can you use a food analogy?'"
+            rows="2"
+          ></textarea>
+          <button class="chat-send" id="btnChatSend" title="Send">
+            <span>↑</span>
+          </button>
+        </div>
+      </div>
+      <!-- ════════════════════════════════════════════════════════════════ -->
+
+    </div>
+
+    <!-- Block by Block -->
+    <div class="blocks-content hidden" id="blocksContent">
+      <div class="blocks-header">
+        <span class="blocks-title" id="blocksTitle"></span>
+        <button class="btn-ghost" id="btnCollapseAll">Collapse All</button>
+      </div>
+      <div class="blocks-list" id="blocksList"></div>
+    </div>
+
+  </section>
+</main>
+
+<!-- Line Tooltip -->
+<div class="line-tooltip hidden" id="lineTooltip">
+  <div class="tooltip-header">
+    <span class="tooltip-line-num" id="tooltipLineNum"></span>
+    <code class="tooltip-code" id="tooltipCode"></code>
+  </div>
+  <div class="tooltip-body" id="tooltipBody">Loading…</div>
+  <button class="tooltip-close" id="tooltipClose">✕</button>
+</div>
+
+<!-- Feedback Toast -->
+<div class="feedback-toast hidden" id="feedbackToast">
+  <span class="toast-icon">🎯</span>
+  <span class="toast-msg" id="toastMsg"></span>
+</div>
+
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
