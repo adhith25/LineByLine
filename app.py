@@ -10,6 +10,7 @@ from flask import Flask, render_template, request, jsonify, session
 import os, uuid
 from explanation_engine.explainer import ExplainXEngine
 from explanation_engine.parser import CodeParser
+from explanation_engine.resources import build_recommendation_payload
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "explainx-dev-secret-2024")
@@ -18,20 +19,57 @@ engine = ExplainXEngine()
 parser = CodeParser()
 
 
-@app.route("/")
-def index():
+def _ensure_session_defaults():
     if "user_id" not in session:
         session["user_id"]             = str(uuid.uuid4())
         session["interaction_history"] = []
         session["comprehension_score"] = 50
         session["last_mode"]           = "beginner"
         session["chat_history"]        = []
+    if "struggles" not in session:
+        session["struggles"] = {}
+    if "errors" not in session:
+        session["errors"] = {}
+    if "concept_checks" not in session:
+        session["concept_checks"] = {}
+    if "recent_improvements" not in session:
+        session["recent_improvements"] = []
+
+def _detect_error_type(code, result):
+    combined = (code + " " + str(result)).lower()
+    if "indexerror" in combined or "out of range" in combined or "off-by-one" in combined or "index out of bounds" in combined:
+        return "IndexError"
+    if "syntaxerror" in combined or "invalid syntax" in combined or "unexpected token" in combined:
+        return "SyntaxError"
+    if "typeerror" in combined or "unsupported operand" in combined:
+        return "TypeError"
+    if "keyerror" in combined:
+        return "KeyError"
+    return None
+
+def _build_struggles_summary():
+    struggles = session.get("struggles", {})
+    errors = session.get("errors", {})
+    parts = []
+    for concept, count in list(struggles.items())[:3]:
+        parts.append(f"encountered {concept} issues {count} times")
+    for err, count in list(errors.items())[:3]:
+        parts.append(f"encountered {err} {count} times")
+    if not parts:
+        return None
+    return "Learner history: " + ", ".join(parts)
+
+
+@app.route("/")
+def index():
+    _ensure_session_defaults()
     return render_template("index.html")
 
 
 @app.route("/api/explain", methods=["POST"])
 def explain():
-    data       = request.get_json()
+    _ensure_session_defaults()
+    data       = request.get_json() or {}
     code       = data.get("code", "").strip()
     mode       = data.get("mode", "beginner")
     language   = data.get("language", "python")
@@ -50,11 +88,30 @@ def explain():
         else:
             resolved_adaptive = False
 
+        struggles_summary = _build_struggles_summary()
+
         result = engine.explain(
             code=code, mode=mode, language=language,
             structure=structure, line_focus=line_focus,
             comprehension_score=session.get("comprehension_score", 50),
+            struggles_summary=struggles_summary,
         )
+
+        # Track submission-level struggles
+        misconception = result.get("possible_misconception")
+        if misconception and isinstance(misconception, dict):
+            c_name = misconception.get("concept_name") or misconception.get("title")
+            if c_name:
+                struggles = dict(session.get("struggles", {}))
+                struggles[c_name] = struggles.get(c_name, 0) + 1
+                session["struggles"] = struggles
+
+        # Track submission-level concrete errors
+        err_type = _detect_error_type(code, result)
+        if err_type:
+            errors = dict(session.get("errors", {}))
+            errors[err_type] = errors.get(err_type, 0) + 1
+            session["errors"] = errors
 
         history = session.get("interaction_history", [])
         history.append({"mode": mode, "code_snippet": code[:120]})
@@ -69,10 +126,135 @@ def explain():
 
     except ConnectionError as e:
         import traceback; traceback.print_exc()
-        return jsonify({"error": "Groq connection failed. " + str(e)}), 502
+        return jsonify({"error": "Gemini API connection failed. " + str(e)}), 502
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+
+@app.route("/api/teach", methods=["POST"])
+def teach():
+    data          = request.get_json() or {}
+    code          = data.get("code", session.get("last_code", "")).strip()
+    misconception = data.get("misconception", "")
+    concept       = data.get("concept", "")
+    mode          = data.get("mode", session.get("last_mode", "academic"))
+    language      = data.get("language", session.get("last_language", "python"))
+
+    try:
+        result = engine.teach_concept(
+            code=code,
+            misconception=misconception,
+            concept=concept,
+            mode=mode,
+            language=language
+        )
+        return jsonify(result)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/concept-check", methods=["POST"])
+def concept_check():
+    data     = request.get_json() or {}
+    code     = data.get("code", session.get("last_code", "")).strip()
+    concept  = data.get("concept", "")
+    mode     = data.get("mode", session.get("last_mode", "academic"))
+    language = data.get("language", session.get("last_language", "python"))
+
+    try:
+        result = engine.generate_concept_check(
+            code=code,
+            concept=concept,
+            mode=mode,
+            language=language
+        )
+        return jsonify(result)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/quiz-result", methods=["POST"])
+def quiz_result():
+    _ensure_session_defaults()
+    data       = request.get_json() or {}
+    concept    = data.get("concept", "General Concept").strip()
+    is_correct = bool(data.get("is_correct", False))
+
+    checks = dict(session.get("concept_checks", {}))
+    c_stat = checks.get(concept, {"attempts": 0, "correct": 0, "incorrect": 0})
+    c_stat["attempts"] += 1
+    if is_correct:
+        c_stat["correct"] += 1
+    else:
+        c_stat["incorrect"] += 1
+    checks[concept] = c_stat
+    session["concept_checks"] = checks
+
+    # Record recent improvement if correct answer achieved
+    if is_correct:
+        improvements = list(session.get("recent_improvements", []))
+        improvements.append({
+            "concept": concept,
+            "status": "Passed Concept Check",
+            "icon": "✓"
+        })
+        session["recent_improvements"] = improvements[-5:]
+
+    return jsonify({"status": "ok", "stats": c_stat})
+
+
+@app.route("/api/progress", methods=["GET"])
+def get_progress():
+    _ensure_session_defaults()
+    return jsonify({
+        "struggles": session.get("struggles", {}),
+        "errors": session.get("errors", {}),
+        "concept_checks": session.get("concept_checks", {}),
+        "recent_improvements": session.get("recent_improvements", [])
+    })
+
+
+@app.route("/api/recommendations", methods=["GET"])
+def get_recommendations():
+    """
+    Phase 5 — Verified Learning Recommendations.
+
+    ZERO AI-HALLUCINATED URL GUARANTEE:
+    - All URLs come from a hand-curated library in explanation_engine/resources.py
+    - Gemini (or the explainer) only determines the *topic & rationale* via session.
+    - URLs are resolved from trusted domains (docs.python.org, MDN, GeeksforGeeks,
+      freeCodeCamp, etc.) — never fabricated.
+    - As a last resort, safe search links on trusted domains are returned.
+
+    Uses session data (struggles, errors, last teaching concept) + language
+    from last submission to assemble a personalised recommendation payload.
+    """
+    _ensure_session_defaults()
+
+    teaching_concept = None
+    last_concept_checks = session.get("concept_checks", {}) or {}
+    if last_concept_checks:
+        sorted_concepts = sorted(
+            last_concept_checks.items(),
+            key=lambda kv: -(kv[1].get("incorrect", 0) * 2 + kv[1].get("attempts", 0))
+        )
+        teaching_concept = sorted_concepts[0][0]
+
+    payload = build_recommendation_payload(
+        struggles=session.get("struggles", {}),
+        errors=session.get("errors", {}),
+        teaching_concept=teaching_concept,
+        language=session.get("last_language", "python"),
+    )
+
+    return jsonify(payload)
+
+
+
 
 
 @app.route("/api/followup", methods=["POST"])
@@ -113,7 +295,7 @@ def followup():
 
     except ConnectionError as e:
         import traceback; traceback.print_exc()
-        return jsonify({"error": "Groq connection failed. " + str(e)}), 502
+        return jsonify({"error": "Gemini API connection failed. " + str(e)}), 502
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500

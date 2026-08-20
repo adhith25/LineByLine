@@ -303,13 +303,8 @@ body {
   color: var(--teal); font-family: var(--mono); font-size: .78rem; font-weight: 700;
 }
 
-/* ── IMPORTANT: keyword → meaning — highlighted pill ── */
-.explanation-body p:has-text,
-.explanation-body li {
-  /* Inline IMPORTANT: styling handled via strong below */
-}
-
-/* Bold = IMPORTANT keyword highlight */
+/* ── IMPORTANT: keyword → meaning — highlighted pill ──
+   Inline IMPORTANT: styling handled via strong below     */
 .explanation-body strong {
   color: var(--accent);
   font-weight: 600;
