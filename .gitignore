@@ -8,13 +8,22 @@
 # ------------------------------------------
 .env
 .env.*
-# Explicitly allow the example env template
+*.env
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+# Explicitly allow the example env templates
 !.env.example
+!backend/.env.example
+!frontend/.env.example
 
 # ------------------------------------------
 # 2. Python
 # ------------------------------------------
 __pycache__/
+backend/__pycache__/
+backend/*/__pycache__/
 *.py[cod]
 *$py.class
 venv/

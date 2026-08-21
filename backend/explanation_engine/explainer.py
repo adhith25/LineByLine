@@ -311,6 +311,208 @@ Return ONLY a single valid JSON object matching this schema:
         if score < 75:  return "academic"
         return "interview"
 
+    # ── Phase 8: Dynamic Prerequisite Chain + Next-Step Guidance ─────────────
+    # 🔴 NO prerequisite_edges table. Gemini dynamically infers the chain.
+    # 🔴 NO misconception_catalog. Learner context is provided inline.
+    def generate_prerequisite_chain(
+        self,
+        target_concept,
+        mastery_snapshot=None,
+        struggles=None,
+        errors=None,
+        language="python",
+    ):
+        """
+        DYNAMICALLY (per-request) identify what concepts a learner must master
+        BEFORE tackling the `target_concept`. Returns:
+          {
+            "prerequisite_chain": [  // ordered: foundations FIRST, target LAST
+                {"concept": "Variables", "why": "...", "mastery_score": 0.84, "status": "mastered|weak|missing"},
+                ...
+                {"concept": target_concept, "why": "...", "mastery_score": ..., "status": "..."}
+            ],
+            "next_steps": [
+                {"action": "...", "priority": "high|medium|low", "concept": "...", "estimated_minutes": 5},
+                ...
+            ],
+            "recommended_action": "...one sentence headline the learner should do RIGHT NOW...",
+            "guidance_summary": "...short paragraph explaining the learning plan...",
+          }
+
+        Best-effort: if Gemini is unavailable, returns None — caller falls
+        back to the rule-based heuristic in resources.py.
+        """
+        if not target_concept or not self.client:
+            return None
+
+        mastery_snapshot = mastery_snapshot or []
+        struggles = struggles or {}
+        errors = errors or {}
+
+        # Build a compact learner context string. Keep it short — Gemini handles
+        # the reasoning, we just provide the facts.
+        ctx_lines = []
+        if mastery_snapshot:
+            ctx_lines.append("Learner mastery scores (known concepts, 0.00–1.00):")
+            for m in list(mastery_snapshot)[:12]:
+                ctx_lines.append(
+                    f"  - {m.get('concept_name') or m.get('concept_id')}: "
+                    f"{float(m.get('mastery_score') or 0.0):.2f} "
+                    f"(attempts={m.get('attempts',0)}, struggles={m.get('struggle_count',0)})"
+                )
+        if struggles:
+            ctx_lines.append("Repeated struggles (concept → count):")
+            for c, n in list(struggles.items())[:8]:
+                ctx_lines.append(f"  - {c}: {n}x")
+        if errors:
+            ctx_lines.append("Frequent errors (type → count):")
+            for e, n in list(errors.items())[:6]:
+                ctx_lines.append(f"  - {e}: {n}x")
+        learner_ctx = "\n".join(ctx_lines) or "No prior learner data available (new learner)."
+
+        sys_prompt = (
+            "You are an expert CS curriculum designer for a beginner-to-intermediate Python tutor. "
+            f"The learner is trying to learn: **{target_concept}** (language: {language}).\n\n"
+            "YOUR TASK:\n"
+            "1. Dynamically identify the ordered chain of prerequisite concepts the learner\n"
+            "   should ideally understand BEFORE (or alongside) tackling this target.\n"
+            "   - DO NOT reference any static graph. Use your general CS pedagogy knowledge.\n"
+            "   - Keep the chain SHORT (1–4 prerequisites + target at the end = 2–5 items total).\n"
+            "   - Every prerequisite must be a real, teachable concept (not vague like 'basics').\n"
+            "2. For each item, briefly explain WHY it is a prerequisite (1 sentence, 80 chars max).\n"
+            "3. Infer each item's mastery status using the learner-context provided:\n"
+            "   - 'mastered' if score >= 0.75  OR  seen >= 4 times with 0 struggles.\n"
+            "   - 'weak'     if 0.25 <= score < 0.75  OR  seen 1–3 times with struggles.\n"
+            "   - 'missing'  if score < 0.25  OR  concept never seen before.\n"
+            "4. Recommend 2–4 concrete, actionable next steps (not URLs — the resources\n"
+            "   module already provides URLs from its curated verified library).\n"
+            "5. Write a recommended_action headline (1 sentence, learner-facing, 120 chars max).\n"
+            "6. Write a short guidance_summary paragraph (2–4 sentences) explaining the plan.\n\n"
+            "CRITICAL RULES (NEVER BREAK THESE):\n"
+            "- Respond ONLY as valid JSON. No markdown, no extra prose, no code fences.\n"
+            "- prerequisite_chain MUST be an ARRAY of objects, each with exactly these keys:\n"
+            "    concept: string\n"
+            "    why: string (1 short sentence, under 80 chars)\n"
+            "    mastery_score: number 0.00–1.00 (infer from context, 0.00 if unknown)\n"
+            "    status: one of ['mastered','weak','missing']\n"
+            "  The CHAIN IS ORDERED: earliest foundations first, then prerequisites build\n"
+            "  upward, and the FINAL item MUST BE the target concept itself.\n"
+            "- next_steps MUST be an ARRAY of 2–4 objects, each with:\n"
+            "    action: string  (learner-facing imperative, e.g. 'Watch the 5-min guide to Lists')\n"
+            "    priority: one of ['high','medium','low']\n"
+            "    concept: string  (link to the prerequisite_chain concept name, exact match when possible)\n"
+            "    estimated_minutes: integer 1..60\n"
+            "- recommended_action: string (1 sentence)\n"
+            "- guidance_summary: string (2–4 sentences, paragraph form, learner-facing warm tone)"
+        )
+
+        user_prompt = (
+            f"## Target concept to learn\n{target_concept}\n\n"
+            f"## Programming language\n{language}\n\n"
+            f"## Learner context\n{learner_ctx}\n\n"
+            "## Output\nReturn a single JSON object matching the required schema."
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=sys_prompt + "\n\n---\n\nUSER:\n" + user_prompt,
+                config={"temperature": 0.1, "response_mime_type": "application/json"},
+            )
+            text = getattr(response, "text", None) or ""
+            data = self._extract_json(text)
+            if not isinstance(data, dict):
+                return None
+
+            # --- Validate & coerce prerequisite_chain ---
+            raw_chain = data.get("prerequisite_chain")
+            if not isinstance(raw_chain, list) or len(raw_chain) == 0:
+                return None
+            cleaned_chain = []
+            STATUS_ALLOWED = {"mastered", "weak", "missing"}
+            for item in raw_chain:
+                if not isinstance(item, dict):
+                    continue
+                c = str(item.get("concept") or "").strip()
+                if not c:
+                    continue
+                try:
+                    ms = float(item.get("mastery_score") or 0.0)
+                except Exception:
+                    ms = 0.0
+                ms = 0.0 if ms < 0 else (1.0 if ms > 1 else ms)
+                st = str(item.get("status") or "missing").lower()
+                if st not in STATUS_ALLOWED:
+                    st = "missing"
+                cleaned_chain.append({
+                    "concept": c,
+                    "why": str(item.get("why") or "").strip()[:120],
+                    "mastery_score": round(ms, 2),
+                    "status": st,
+                })
+            if not cleaned_chain:
+                return None
+            # Guarantee target concept is last
+            if cleaned_chain[-1]["concept"].lower() != str(target_concept).strip().lower():
+                cleaned_chain.append({
+                    "concept": str(target_concept).strip(),
+                    "why": f"Target concept you want to master.",
+                    "mastery_score": cleaned_chain[-1]["mastery_score"],
+                    "status": cleaned_chain[-1]["status"],
+                })
+            data["prerequisite_chain"] = cleaned_chain
+
+            # --- Validate & coerce next_steps ---
+            raw_steps = data.get("next_steps") or []
+            cleaned_steps = []
+            PRIO_ALLOWED = {"high", "medium", "low"}
+            if isinstance(raw_steps, list):
+                for s in raw_steps:
+                    if not isinstance(s, dict):
+                        continue
+                    action = str(s.get("action") or "").strip()
+                    if not action:
+                        continue
+                    prio = str(s.get("priority") or "medium").lower()
+                    if prio not in PRIO_ALLOWED:
+                        prio = "medium"
+                    try:
+                        mins = int(s.get("estimated_minutes") or 5)
+                    except Exception:
+                        mins = 5
+                    mins = 1 if mins < 1 else (60 if mins > 60 else mins)
+                    cleaned_steps.append({
+                        "action": action[:200],
+                        "priority": prio,
+                        "concept": str(s.get("concept") or "").strip()[:80],
+                        "estimated_minutes": mins,
+                    })
+            if not cleaned_steps:
+                cleaned_steps.append({
+                    "action": f"Review the verified resources for {target_concept}.",
+                    "priority": "high",
+                    "concept": str(target_concept),
+                    "estimated_minutes": 10,
+                })
+            data["next_steps"] = cleaned_steps[:4]
+
+            # --- Simple strings ---
+            data["recommended_action"] = str(
+                data.get("recommended_action")
+                or f"First, strengthen your understanding of {cleaned_chain[0]['concept']}, then tackle {target_concept}."
+            )[:200]
+            data["guidance_summary"] = str(
+                data.get("guidance_summary")
+                or "Start with the foundational concepts listed below. Work through the verified resources, then return to practice with concept checks."
+            )[:1500]
+
+            return data
+
+        except Exception as exc:
+            # Persistence-style best-effort: never crash the recs endpoint.
+            print(f"[explainer] WARN: generate_prerequisite_chain failed: {exc!r}")
+            return None
+
     def _normalize_mode(self, mode):
         m = (mode or "").lower()
         if m in ("toddler", "eli5"): return "toddler"

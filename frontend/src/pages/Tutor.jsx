@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import CodeEditor from '../components/CodeEditor';
 import PersonaSelector from '../components/PersonaSelector';
 import AnalyzeButton from '../components/AnalyzeButton';
-import LineExplanation from '../components/LineExplanation';
-import Misconception from '../components/Misconception';
-import ConceptTeaching from '../components/ConceptTeaching';
-import ConceptCheck from '../components/ConceptCheck';
-import Progress from '../components/Progress';
-import Recommendation from '../components/Recommendation';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import ExplanationSection from '../components/tutor/ExplanationSection';
+import MisconceptionInsight from '../components/tutor/MisconceptionInsight';
+import ConceptTeachingSection from '../components/tutor/ConceptTeachingSection';
+import ConceptCheckSection from '../components/tutor/ConceptCheckSection';
+import NextStepTeaser from '../components/tutor/NextStepTeaser';
 import {
   explainCode,
   teachConcept,
@@ -18,6 +17,7 @@ import {
   submitQuizResult,
   fetchRecommendations,
 } from '../services/api';
+import { MessageSquarePlus, Bot, ChevronDown, ChevronUp } from 'lucide-react';
 
 const DEFAULT_CODE = '';
 
@@ -31,30 +31,36 @@ const QUICK_ACTIONS = [
   { id: 'mistakes', label: '⚠️ Common mistakes' },
 ];
 
+const LOADING_MESSAGES = [
+  'Analyzing your code structure…',
+  'Understanding the logic and intent…',
+  'Identifying important concepts…',
+  'Preparing your personalized learning guidance…',
+];
+
 export default function Tutor() {
   const [code, setCode] = useState(DEFAULT_CODE);
   const [language, setLanguage] = useState('python');
   const [persona, setPersona] = useState('academic');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [loadingMessageIdx, setLoadingMessageIdx] = useState(0);
 
   const [analysisResult, setAnalysisResult] = useState(null);
 
-  // Teaching & Quiz State
   const [isTeachingLoading, setIsTeachingLoading] = useState(false);
   const [teachingData, setTeachingData] = useState(null);
   const [conceptCheckData, setConceptCheckData] = useState(null);
 
-  // Progress State
   const [progressData, setProgressData] = useState(null);
   const [isProgressLoading, setIsProgressLoading] = useState(false);
   const [recommendationData, setRecommendationData] = useState(null);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
-  
-  // Follow-up state
+
   const [chatHistory, setChatHistory] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isFollowupLoading, setIsFollowupLoading] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
 
   const refreshProgress = async () => {
     setIsProgressLoading(true);
@@ -81,9 +87,15 @@ export default function Tutor() {
   };
 
   useEffect(() => {
-    refreshProgress();
-    refreshRecommendations();
-  }, []);
+    if (!isLoading) return undefined;
+    setLoadingMessageIdx(0);
+    const id = setInterval(() => {
+      setLoadingMessageIdx((prev) =>
+        prev < LOADING_MESSAGES.length - 1 ? prev + 1 : prev
+      );
+    }, 1400);
+    return () => clearInterval(id);
+  }, [isLoading]);
 
   const handleAnalyze = async () => {
     if (!code.trim()) {
@@ -96,6 +108,7 @@ export default function Tutor() {
     setChatHistory([]);
     setTeachingData(null);
     setConceptCheckData(null);
+    setChatOpen(true);
 
     try {
       const result = await explainCode({
@@ -105,8 +118,7 @@ export default function Tutor() {
       });
 
       setAnalysisResult(result);
-      
-      // Populate concept teaching / check if provided
+
       if (result.concept_teaching) {
         setTeachingData(result.concept_teaching);
       }
@@ -114,7 +126,6 @@ export default function Tutor() {
         setConceptCheckData(result.concept_check);
       }
 
-      // Refresh progress metrics after submission
       await refreshProgress();
       await refreshRecommendations();
     } catch (err) {
@@ -128,7 +139,8 @@ export default function Tutor() {
   const handleLearnConcept = async () => {
     if (!analysisResult) return;
     const misc = analysisResult.possible_misconception || {};
-    const conceptName = misc.concept_name || misc.title || 'Core Programming Mechanics';
+    const conceptName =
+      misc.concept_name || misc.title || 'Core Programming Mechanics';
     const description = misc.description || '';
 
     setIsTeachingLoading(true);
@@ -161,7 +173,8 @@ export default function Tutor() {
     const conceptName =
       (teachingData && teachingData.concept) ||
       (analysisResult && analysisResult.possible_misconception
-        ? analysisResult.possible_misconception.concept_name || analysisResult.possible_misconception.title
+        ? analysisResult.possible_misconception.concept_name ||
+          analysisResult.possible_misconception.title
         : 'Zero-Based Indexing');
 
     try {
@@ -190,8 +203,11 @@ export default function Tutor() {
     if (!userMsg && !action) return;
 
     const currentExp = analysisResult ? analysisResult.explanation : '';
-    
-    const userTurn = { role: 'user', content: action ? `[Action: ${action}]` : userMsg };
+
+    const userTurn = {
+      role: 'user',
+      content: action ? `[Action: ${action}]` : userMsg,
+    };
     setChatHistory((prev) => [...prev, userTurn]);
     if (!action) setChatInput('');
 
@@ -216,18 +232,26 @@ export default function Tutor() {
     }
   };
 
+  const showFollowup = useMemo(
+    () => !!analysisResult,
+    [analysisResult]
+  );
+
   return (
     <div className="tutor-container">
       {/* LEFT PANEL: Code Input & Persona Setup */}
       <section className="tutor-panel">
-        <div className="panel-header">
+        <div className="panel-header" style={{ flexShrink: 0 }}>
           <span className="panel-title">
-            <span>💻</span> Code Input & Persona
+            <span>💻</span> Code Workspace
           </span>
         </div>
 
-        <div style={{ padding: '12px 20px 0' }}>
-          <span className="control-label" style={{ display: 'block', marginBottom: 8 }}>
+        <div style={{ padding: '12px 20px 0', flexShrink: 0 }}>
+          <span
+            className="control-label"
+            style={{ display: 'block', marginBottom: 8 }}
+          >
             Select Tutor Persona
           </span>
           <PersonaSelector
@@ -241,23 +265,33 @@ export default function Tutor() {
           setCode={setCode}
           language={language}
           setLanguage={setLanguage}
-          onClear={handleClear}
         />
 
-        <div className="editor-footer">
-          <AnalyzeButton
-            onAnalyze={handleAnalyze}
-            isLoading={isLoading}
-            persona={persona}
-          />
+        <div className="editor-footer" style={{ flexShrink: 0, display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button
+            className="btn-secondary"
+            onClick={handleClear}
+            style={{ width: 'auto', flexShrink: 0, padding: '10px 14px', fontSize: 13 }}
+            title="Clear the code editor"
+          >
+            ✕ Clear Editor
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <AnalyzeButton
+              onAnalyze={handleAnalyze}
+              isLoading={isLoading}
+              persona={persona}
+            />
+          </div>
         </div>
       </section>
 
-      {/* RIGHT PANEL: AI Tutor Output & Progress */}
+      {/* RIGHT PANEL: AI Learning Flow — staged progressive disclosure */}
       <section className="tutor-panel">
         <div className="panel-header">
           <span className="panel-title">
-            <span>🤖</span> AI Tutor Analysis
+            <Bot size={15} aria-hidden="true" style={{ color: 'var(--accent-primary)' }} />
+            AI Tutor
           </span>
           {analysisResult && (
             <span
@@ -276,150 +310,214 @@ export default function Tutor() {
           )}
         </div>
 
-        <div className="output-body">
+        <div className="output-body output-body--tutor">
           {error && (
-            <div className="error-banner">
+            <div className="error-banner" role="alert">
               <span>⚠️</span>
               <div>{error}</div>
             </div>
           )}
 
-          {/* Persistent Learning Progress Overview */}
-          <Progress progressData={progressData} isLoading={isProgressLoading} />
-
           {isLoading && (
-            <>
-              <div className="loading-state">
-                <div className="spinner" />
-                <p>Analyzing code structure & preparing line-by-line breakdown...</p>
+            <div className="loading-tutor card-box">
+              <div className="loading-tutor-header">
+                <div className="spinner" aria-hidden="true" />
+                <div>
+                  <span className="loading-tutor-title">
+                    {LOADING_MESSAGES[loadingMessageIdx]}
+                  </span>
+                  <span className="loading-tutor-sub">
+                    Building your personalized learning journey…
+                  </span>
+                </div>
               </div>
-              <LineExplanation lineExplanations={null} isLoading={true} />
-            </>
+              <div className="loading-steps" aria-hidden="true">
+                {['Code', 'Explanation', 'Misconception', 'Concept', 'Check', 'Next'].map(
+                  (s, i) => (
+                    <div
+                      key={s}
+                      className={`loading-step${
+                        loadingMessageIdx + 1 >= i ? ' active' : ''
+                      }`}
+                    >
+                      <span className="loading-step-dot" />
+                      <span>{s}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
           )}
 
           {!isLoading && !analysisResult && !error && (
-            <div className="empty-state">
+            <div className="empty-state tutor-empty">
               <span className="empty-icon">🔭</span>
-              <h3 style={{ fontSize: 16, color: 'var(--text-primary)' }}>No Explanation Yet</h3>
+              <h3 style={{ fontSize: 16, color: 'var(--text-primary)' }}>
+                No Explanation Yet
+              </h3>
               <p style={{ fontSize: 13 }}>
-                Paste or write your code on the left, choose your preferred tutor persona, and click <strong>Analyze & Explain Code</strong>.
+                Paste or write your code on the left, choose your preferred
+                tutor persona, and click{' '}
+                <strong>Analyze &amp; Explain Code</strong> to begin your
+                learning journey.
               </p>
+              <ol className="tutor-empty-flow">
+                <li>
+                  <span>1</span>Write or paste code
+                </li>
+                <li>
+                  <span>2</span>Select a tutor persona
+                </li>
+                <li>
+                  <span>3</span>Analyze to unlock the 6-step learning path
+                </li>
+              </ol>
             </div>
           )}
 
           {!isLoading && analysisResult && (
             <>
-              {/* High-level explanation card */}
-              <div className="card-box card-overview">
-                <div className="card-title">
-                  <span>📖</span>
-                  <span>Code Overview</span>
-                </div>
-                <MarkdownRenderer text={analysisResult.explanation} />
-              </div>
-
-              {/* Line-by-line breakdown component */}
-              <LineExplanation
-                lineExplanations={analysisResult.line_explanations}
+              <ExplanationSection
+                analysisResult={analysisResult}
+                stageIndex={0}
               />
 
-              {/* Integrated Possible Misconception Section */}
-              <Misconception
-                misconceptionData={analysisResult.possible_misconception}
+              <MisconceptionInsight
+                analysisResult={analysisResult}
                 onLearnConcept={handleLearnConcept}
                 isLoading={isTeachingLoading}
+                stageIndex={1}
               />
 
-              {/* Concept Teaching Panel */}
-              <ConceptTeaching
+              <ConceptTeachingSection
                 teachingData={teachingData}
                 isLoading={isTeachingLoading}
+                stageIndex={2}
               />
 
-              {/* Concept Check Quiz Component */}
-              <ConceptCheck
+              <ConceptCheckSection
                 checkData={conceptCheckData}
                 onAnswerSubmitted={handleQuizAnswer}
+                stageIndex={3}
               />
 
-              {/* Phase 5: Verified Learning Recommendations */}
-              <Recommendation
+              <NextStepTeaser
                 recommendationData={recommendationData}
                 isLoading={isRecommendationLoading}
+                stageIndex={4}
               />
 
-              {/* Follow-up Chat Panel */}
-              <div className="card-box">
-                <div className="card-title">
-                  <span>💬</span>
-                  <span>Follow-Up & Questions</span>
-                </div>
-
-                <div className="quick-actions" style={{ marginBottom: 12 }}>
-                  {QUICK_ACTIONS.map((act) => (
-                    <button
-                      key={act.id}
-                      className="qa-chip"
-                      onClick={() => handleSendFollowup(act.id)}
-                      disabled={isFollowupLoading}
-                    >
-                      {act.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="chat-log" style={{ marginBottom: 12 }}>
-                  {chatHistory.length === 0 && !isFollowupLoading && (
-                    <div className="chat-empty">
-                      💡 No questions yet — try a Quick Action above or ask anything about the explanation!
+              {showFollowup && (
+                <div className="stage-group stage-fade chat-stage" style={{ '--stage-index': 5 }}>
+                  <div className="stage-meta">
+                    <span className="stage-dot" aria-hidden="true" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span className="stage-kicker">Step 6 · Ask Anything</span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <h3 className="stage-title">
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <MessageSquarePlus size={16} style={{ color: 'var(--accent-primary)' }} />
+                            Follow-Up &amp; Questions
+                          </span>
+                        </h3>
+                        <button
+                          className="chat-collapse"
+                          onClick={() => setChatOpen((o) => !o)}
+                          aria-expanded={chatOpen}
+                          aria-controls="followup-panel"
+                          aria-label={chatOpen ? 'Collapse chat' : 'Expand chat'}
+                        >
+                          {chatOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                      </div>
                     </div>
-                  )}
-                  {chatHistory.map((turn, i) => (
-                    <div key={i} className={`chat-bubble ${turn.role}`}>
-                      {turn.role === 'assistant' ? (
-                        <MarkdownRenderer
-                          text={turn.content}
-                          style={{ fontSize: 13, color: 'inherit', lineHeight: 1.55 }}
+                  </div>
+
+                  {chatOpen && (
+                    <div id="followup-panel" className="card-box followup-panel">
+                      <div
+                        className="quick-actions"
+                        style={{ marginBottom: 12, flexWrap: 'wrap' }}
+                      >
+                        {QUICK_ACTIONS.map((act) => (
+                          <button
+                            key={act.id}
+                            className="qa-chip"
+                            onClick={() => handleSendFollowup(act.id)}
+                            disabled={isFollowupLoading}
+                          >
+                            {act.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="chat-log" style={{ marginBottom: 12 }}>
+                        {chatHistory.length === 0 && !isFollowupLoading && (
+                          <div className="chat-empty">
+                            💡 No questions yet — try a Quick Action above or
+                            ask anything about the explanation!
+                          </div>
+                        )}
+                        {chatHistory.map((turn, i) => (
+                          <div key={i} className={`chat-bubble ${turn.role}`}>
+                            {turn.role === 'assistant' ? (
+                              <MarkdownRenderer
+                                text={turn.content}
+                                style={{
+                                  fontSize: 13,
+                                  color: 'inherit',
+                                  lineHeight: 1.55,
+                                }}
+                              />
+                            ) : (
+                              turn.content
+                            )}
+                          </div>
+                        ))}
+                        {isFollowupLoading && (
+                          <div className="chat-bubble assistant">
+                            <div className="typing-indicator">
+                              <span />
+                              <span />
+                              <span />
+                              <span
+                                style={{
+                                  marginLeft: 8,
+                                  fontSize: 12,
+                                  color: 'var(--text-secondary)',
+                                }}
+                              >
+                                Tutor is thinking…
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="chat-input-container">
+                        <input
+                          type="text"
+                          className="chat-input"
+                          placeholder="Ask a follow-up question…"
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSendFollowup();
+                          }}
+                          aria-label="Follow-up question"
                         />
-                      ) : (
-                        turn.content
-                      )}
-                    </div>
-                  ))}
-                  {isFollowupLoading && (
-                    <div className="chat-bubble assistant">
-                      <div className="typing-indicator">
-                        <span />
-                        <span />
-                        <span />
-                        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-                          Tutor is thinking...
-                        </span>
+                        <button
+                          className="btn-send"
+                          onClick={() => handleSendFollowup()}
+                          disabled={isFollowupLoading || !chatInput.trim()}
+                        >
+                          Send
+                        </button>
                       </div>
                     </div>
                   )}
                 </div>
-
-                <div className="chat-input-container">
-                  <input
-                    type="text"
-                    className="chat-input"
-                    placeholder="Ask a follow-up question..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSendFollowup();
-                    }}
-                  />
-                  <button
-                    className="btn-send"
-                    onClick={() => handleSendFollowup()}
-                    disabled={isFollowupLoading || !chatInput.trim()}
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
+              )}
             </>
           )}
         </div>

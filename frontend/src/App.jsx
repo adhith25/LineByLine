@@ -1,40 +1,41 @@
 import React from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Tutor from './pages/Tutor';
-import ErrorBoundary from './components/ErrorBoundary';
-import { resetSession } from './services/api';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+import Progress from './pages/Progress';
+import History from './pages/History';
+import Profile from './pages/Profile';
+import ProtectedRoute from './components/ProtectedRoute';
+import AppLayout from './components/layout/AppLayout';
+import { AuthProvider } from './contexts/AuthContext';
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/tutor" element={<Tutor />} />
+        <Route path="/progress" element={<Progress />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/profile" element={<Profile />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/tutor" replace />} />
+    </Routes>
+  );
+}
 
 export default function App() {
-  const handleResetSession = async () => {
-    try {
-      await resetSession();
-      window.location.reload();
-    } catch (err) {
-      console.error('Reset failed:', err);
-      alert('Failed to reset session. Please refresh the page manually.');
-    }
-  };
-
   return (
-    <div>
-      <header className="app-header">
-        <div className="brand">
-          <span className="brand-badge">LBL</span>
-          <span className="brand-title">LineByLine</span>
-          <span className="brand-subtitle">AI Code Learning Tutor</span>
-        </div>
-
-        <div className="header-actions">
-          <button className="btn-secondary danger" onClick={handleResetSession}>
-            ↺ Reset Session
-          </button>
-        </div>
-      </header>
-
-      <main>
-        <ErrorBoundary>
-          <Tutor />
-        </ErrorBoundary>
-      </main>
-    </div>
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
   );
 }
